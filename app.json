@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "name": "ai-wardrobe",
+    "slug": "ai-wardrobe",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.vorotech.aiwardrobe",
+      "supportsTablet": true,
+      "appleTeamId": "6DN7R2HPMQ",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.iclawdius.aiwardrobe",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "owner": "iclawdius-org",
+    "newArchEnabled": false,
+    "extra": {
+      "eas": {
+        "projectId": "145d9a9d-1950-41f0-83d7-a2d359826257"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/145d9a9d-1950-41f0-83d7-a2d359826257",
+      "fallbackToCacheTimeout": 0
+    }
+  }
+}

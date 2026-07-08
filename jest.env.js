@@ -1,0 +1,3 @@
+// Load env vars for tests
+process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://tmcfiscdluwwpkcaeyky.supabase.co';
+process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRtY2Zpc2NkbHV3d3BrY2FleWt5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMzNDUyMDcsImV4cCI6MjA5ODkyMTIwN30.oWkjqsY_WtAqLUhNq0m2_1BLK18bMHOZ_ZGCoF2IC2k';
