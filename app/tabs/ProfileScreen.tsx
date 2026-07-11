@@ -1,69 +1,37 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image, Alert } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import * as Updates from 'expo-updates';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Updates from 'expo-updates';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../lib/authContext';
 
-type ScanStatus = 'not_started' | 'uploaded' | 'processing' | 'complete' | 'failed';
-
 export default function ProfileScreen() {
-  const navigation = useNavigation<any>();
   const { session } = useAuth();
-  const [scanStatus, setScanStatus] = useState<ScanStatus>('not_started');
-  const [scanProgress, setScanProgress] = useState(0);
-  const [scanMessage, setScanMessage] = useState('');
-  const [loading, setLoading] = useState(true);
   const [modelPhotoUrl, setModelPhotoUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
-  const fetchScanStatus = useCallback(async () => {
+  const fetchProfile = useCallback(async () => {
     if (!session?.user?.id) return;
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('body_scan_status, body_scan_progress, body_scan_message, model_photo_url')
+        .select('model_photo_url')
         .eq('id', session.user.id)
         .single();
 
       if (error) return;
-      setScanStatus(data.body_scan_status || 'not_started');
-      setScanProgress(data.body_scan_progress || 0);
-      setScanMessage(data.body_scan_message || '');
       setModelPhotoUrl(data.model_photo_url || null);
     } finally {
       setLoading(false);
     }
   }, [session]);
 
-  useEffect(() => {
-    fetchScanStatus();
-    const interval = setInterval(fetchScanStatus, 5000);
-    return () => clearInterval(interval);
-  }, [fetchScanStatus]);
-
-  const statusLabel = () => {
-    switch (scanStatus) {
-      case 'not_started': return 'No scan yet';
-      case 'uploaded': return 'Uploading...';
-      case 'processing': return `Processing... ${scanProgress}%`;
-      case 'complete': return 'Complete';
-      case 'failed': return 'Failed';
-    }
-  };
-
-  const statusColor = () => {
-    switch (scanStatus) {
-      case 'complete': return '#34C759';
-      case 'failed': return '#FF3B30';
-      case 'processing':
-      case 'uploaded': return '#007AFF';
-      default: return '#999';
-    }
-  };
+  React.useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
 
   const uploadModelPhoto = async (source: 'camera' | 'gallery') => {
     if (!session?.user?.id) return;
@@ -136,8 +104,8 @@ export default function ProfileScreen() {
       setModelPhotoUrl(publicUrl);
       Alert.alert('Success', 'Model photo updated! You can now render outfits.');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Upload failed';
-      Alert.alert('Error', msg);
+      const msg = err instanceof Error ? err.message : (err as any)?.message || JSON.stringify(err);
+      Alert.alert('Error', typeof msg === 'string' ? msg : 'Upload failed');
     } finally {
       setUploadingPhoto(false);
     }
@@ -151,7 +119,7 @@ export default function ProfileScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Model Photo</Text>
         <Text style={styles.sectionDescription}>
-          A front-facing photo used for virtual try-on rendering.
+          A front-facing full-body photo used for virtual try-on rendering.
         </Text>
 
         {modelPhotoUrl ? (
@@ -163,7 +131,18 @@ export default function ProfileScreen() {
                 onPress={() => uploadModelPhoto('camera')}
                 disabled={uploadingPhoto}
               >
-                <Text style={styles.secondaryButtonText}>Retake</Text>
+                {uploadingPhoto ? (
+                  <ActivityIndicator color="#333" />
+                ) : (
+                  <Text style={styles.secondaryButtonText}>📸 Retake</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryButton}
+                onPress={() => uploadModelPhoto('gallery')}
+                disabled={uploadingPhoto}
+              >
+                <Text style={styles.secondaryButtonText}>🖼️ Choose</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -189,46 +168,15 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         )}
+
+        {!modelPhotoUrl && !loading && (
+          <Text style={styles.hint}>
+            ⚠️ You need a model photo to render outfits. Take or upload a full-body photo.
+          </Text>
+        )}
       </View>
 
       <View style={styles.divider} />
-
-      {/* Body Scan Status */}
-      <TouchableOpacity
-        style={styles.statusRow}
-        onPress={() => {
-          if (scanStatus === 'complete' || scanStatus === 'failed' || scanStatus === 'processing' || scanStatus === 'uploaded') {
-            navigation.navigate('ScanProgress');
-          }
-        }}
-      >
-        <View style={styles.statusLeft}>
-          <Text style={styles.statusLabel}>Body Scan</Text>
-          {loading ? (
-            <ActivityIndicator size="small" color="#999" />
-          ) : (
-            <Text style={[styles.statusValue, { color: statusColor() }]}>
-              {statusLabel()}
-            </Text>
-          )}
-          {scanMessage && scanStatus !== 'not_started' && (
-            <Text style={styles.statusMessage} numberOfLines={1}>{scanMessage}</Text>
-          )}
-        </View>
-        <Text style={styles.chevron}>›</Text>
-      </TouchableOpacity>
-
-      <View style={styles.divider} />
-
-      {/* Start Scan Button */}
-      <TouchableOpacity
-        style={styles.button}
-        onPress={() => navigation.navigate('BodyScan')}
-      >
-        <Text style={styles.buttonText}>
-          {scanStatus === 'not_started' ? 'Start Body Scan' : 'Re-scan'}
-        </Text>
-      </TouchableOpacity>
 
       {/* Version Info */}
       <View style={styles.versionContainer}>
@@ -275,8 +223,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modelPhoto: {
-    width: 150,
-    height: 200,
+    width: 180,
+    height: 240,
     borderRadius: 10,
     marginBottom: 10,
     backgroundColor: '#f0f0f0',
@@ -311,51 +259,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 4,
-  },
-  statusLeft: {
-    flex: 1,
-  },
-  statusLabel: {
-    fontSize: 17,
-    fontWeight: '500',
-    color: '#000',
-  },
-  statusValue: {
-    fontSize: 15,
-    marginTop: 2,
-  },
-  statusMessage: {
+  hint: {
     fontSize: 13,
-    color: '#999',
-    marginTop: 2,
-  },
-  chevron: {
-    fontSize: 24,
-    color: '#ccc',
-    marginLeft: 10,
+    color: '#FF3B30',
+    marginTop: 12,
+    textAlign: 'center',
   },
   divider: {
     height: 1,
     backgroundColor: '#f0f0f0',
     marginBottom: 20,
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 14,
-    paddingHorizontal: 28,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   versionContainer: {
     position: 'absolute',
