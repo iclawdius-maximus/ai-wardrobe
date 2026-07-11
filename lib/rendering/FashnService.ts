@@ -28,7 +28,7 @@ export interface FashnPrediction {
   id: string;
   status: 'starting' | 'in_queue' | 'processing' | 'completed' | 'failed' | 'canceled';
   output?: FashnOutput;
-  error?: string | null;
+  error?: string | null | Record<string, unknown>;
 }
 
 export class FashnService {
@@ -95,7 +95,8 @@ export class FashnService {
 
     const data = await response.json();
     if (!data.id) {
-      throw new Error('FASHN submit returned no prediction ID');
+      const errStr = data.error ? (typeof data.error === 'string' ? data.error : JSON.stringify(data.error)) : 'no prediction ID returned';
+      throw new Error(`FASHN submit failed: ${errStr}`);
     }
 
     return data.id;
@@ -134,10 +135,14 @@ export class FashnService {
           return prediction;
 
         case 'failed':
-        case 'canceled':
-          throw new Error(
-            `FASHN prediction ${prediction.status}: ${prediction.error || 'Unknown error'}`
-          );
+        case 'canceled': {
+          const errStr = typeof prediction.error === 'string'
+            ? prediction.error
+            : prediction.error
+              ? JSON.stringify(prediction.error)
+              : 'Unknown error';
+          throw new Error(`FASHN prediction ${prediction.status}: ${errStr}`);
+        }
 
         case 'starting':
           onProgress?.('FASHN is starting...');
