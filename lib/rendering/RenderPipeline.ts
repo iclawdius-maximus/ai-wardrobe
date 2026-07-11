@@ -2,23 +2,10 @@ import { RenderService, RenderProgressCallback } from './RenderService';
 import { ModelManager } from './ModelManager';
 import { GarmentConditioningService } from './GarmentConditioningService';
 import { LoRAService } from './LoRAService';
-import { RenderRequest, RenderResult, RenderStatus, AiRendererModule } from './types';
+import { RenderRequest, RenderResult, RenderStatus } from './types';
 import { supabase } from '../supabase';
-import { RenderCache } from '../database.types';
-
-// Lazy import of native module to avoid issues in test environment
-let AiRenderer: AiRendererModule | null = null;
-function getAiRenderer(): AiRendererModule | null {
-  if (AiRenderer !== null) return AiRenderer;
-  try {
-    // @ts-ignore
-    AiRenderer = require('../../modules/ai-renderer').default;
-  } catch (error) {
-    // Native module not available (e.g., in test environment)
-    AiRenderer = null;
-  }
-  return AiRenderer;
-}
+import { RenderCache, Garment } from '../database.types';
+import { FashnService } from './FashnService';
 
 export class RenderPipeline {
   private renderService: RenderService;
@@ -71,35 +58,11 @@ export class RenderPipeline {
         return cachedResult;
       }
 
-      // Step 2: Load user LoRA
-      onProgress?.({ status: RenderStatus.PROCESSING, progress: 10, message: 'Loading user LoRA weights' });
-      try {
-        await this.loraService.loadUserLoRA(request.user_id);
-      } catch (error) {
-        const errorMessage = `Failed to load LoRA weights: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        onProgress?.({ status: RenderStatus.FAILED, error: errorMessage });
-        throw new Error(errorMessage);
-      }
-
-      // Step 3: Load garment conditioning data
-      onProgress?.({ status: RenderStatus.PROCESSING, progress: 30, message: 'Preparing garment conditioning data' });
-      const conditioningPromises = request.garment_ids.map(garmentId => 
-        this.garmentConditioningService.prepareGarmentConditioning(garmentId)
-      );
-      
-      try {
-        await Promise.all(conditioningPromises);
-      } catch (error) {
-        const errorMessage = `Failed to prepare garment conditioning: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        onProgress?.({ status: RenderStatus.FAILED, error: errorMessage });
-        throw new Error(errorMessage);
-      }
-
-      // Step 4: Run inference (mock for now)
-      onProgress?.({ status: RenderStatus.PROCESSING, progress: 50, message: 'Running inference' });
+      // Step 2: Run FASHN inference (handles 1-2 garments via chained rendering)
+      onProgress?.({ status: RenderStatus.PROCESSING, progress: 10, message: 'Starting render...' });
       const result = await this.runInference(request, onProgress);
 
-      // Step 5: Cache result
+      // Step 3: Cache result
       try {
         await this.cacheRenderResult(request, result);
       } catch (error) {
@@ -107,7 +70,7 @@ export class RenderPipeline {
         // Don't throw here as the render was successful
       }
 
-      // Step 6: Return result
+      // Step 4: Return result
       onProgress?.({ status: RenderStatus.COMPLETE, progress: 100, message: 'Render complete' });
       return result;
     } catch (error) {
@@ -181,89 +144,173 @@ export class RenderPipeline {
   }
 
   /**
-   * Run the actual inference (uses native module when available, fallback to mock)
+   * Layer priority for chained rendering.
+   * Base layers first, outerwear last — so jackets go on top of shirts.
+   */
+  private readonly LAYER_ORDER: Record<string, number> = {
+    bottom: 0,
+    top: 1,
+    dress: 2,    // one-pieces after base layers
+    outerwear: 3, // outerwear always last
+    shoes: 4,
+    accessory: 5,
+  };
+
+  /**
+   * Run inference using FASHN Virtual Try-On API.
+   *
+   * Supports up to 2 garments via chained rendering:
+   *   - 1 garment: body scan + garment → result
+   *   - 2 garments: body scan + garment_1 → intermediate → + garment_2 → final result
+   *
+   * Garments are sorted by layer priority (base layers first, outerwear last)
+   * so that each subsequent FASHN call adds the next garment on top.
+   *
+   * Flow:
+   * 1. Fetch all garment data from Supabase
+   * 2. Fetch user's body scan image from Supabase storage
+   * 3. Sort garments by layer order
+   * 4. Chain FASHN try-on calls (each result becomes the model_image for the next)
+   * 5. Return the final result image URL
    */
   private async runInference(
     request: RenderRequest,
     onProgress?: RenderProgressCallback
   ): Promise<RenderResult> {
-    try {
-      // Use native module if available
-      const renderer = getAiRenderer();
-    if (renderer) {
-        try {
-          onProgress?.({ 
-            status: RenderStatus.PROCESSING, 
-            progress: 60, 
-            message: 'Using native AI renderer' 
-          });
-          
-          // Check if model is loaded, if not load it
-          if (!renderer.isModelLoaded()) {
-            onProgress?.({ 
-              status: RenderStatus.PROCESSING, 
-              progress: 65, 
-              message: 'Loading model' 
-            });
-            // In a real implementation, you would provide the actual model path
-            // await AiRenderer.loadModel('/path/to/model');
-          }
-          
-          // Prepare generation options
-          // In a real implementation, you would map the request to proper options
-          const prompt = `fashion model wearing ${request.garment_ids.length} items, ${request.pose} pose`;
-          
-          // Generate image using native module
-          const imagePath = await renderer.generate(prompt);
-          
-          // Generate result
-          const cacheKey = this.generateCacheKey(request);
-          
-          return {
-            image_url: `file://${imagePath}`,
-            cache_key: cacheKey,
-            timestamp: Date.now()
-          };
-        } catch (error) {
-          console.error('Native rendering failed, falling back to mock:', error);
-          onProgress?.({ 
-            status: RenderStatus.PROCESSING, 
-            progress: 70, 
-            message: 'Native rendering failed, using mock' 
+    const apiKey = process.env.EXPO_PUBLIC_FASHN_API_KEY;
+    if (!apiKey) {
+      throw new Error('FASHN_API_KEY is not configured. Add EXPO_PUBLIC_FASHN_API_KEY to your .env.local file.');
+    }
+
+    const fashn = new FashnService(apiKey);
+
+    // Step 1: Fetch all garment data
+    onProgress?.({ status: RenderStatus.PROCESSING, progress: 50, message: 'Loading garment data...' });
+
+    const garmentIds = request.garment_ids.slice(0, 2); // Max 2 garments
+    const garments: Garment[] = [];
+
+    for (const id of garmentIds) {
+      const { data, error } = await supabase
+        .from('garments')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (error || !data) {
+        throw new Error(`Failed to load garment ${id}: ${error?.message || 'Not found'}`);
+      }
+
+      const garment = data as Garment;
+      if (!garment.segmented_url && !garment.image_url) {
+        throw new Error(`Garment ${garment.nickname || id} has no image URL`);
+      }
+
+      garments.push(garment);
+    }
+
+    // Step 2: Fetch user's body scan image
+    onProgress?.({ status: RenderStatus.PROCESSING, progress: 55, message: 'Loading body scan...' });
+
+    const modelImageUrl = await this.getBodyScanImageUrl(request.user_id);
+    if (!modelImageUrl) {
+      throw new Error(
+        'No body scan found. Please complete a body scan in the Body Scan tab before rendering outfits.'
+      );
+    }
+
+    // Step 3: Sort garments by layer order (base layers first, outerwear last)
+    const sortedGarments = [...garments].sort((a, b) =>
+      (this.LAYER_ORDER[a.type] ?? 99) - (this.LAYER_ORDER[b.type] ?? 99)
+    );
+
+    // Step 4: Chain FASHN try-on calls
+    let currentModelImage = modelImageUrl;
+    const totalSteps = sortedGarments.length;
+
+    for (let i = 0; i < totalSteps; i++) {
+      const garment = sortedGarments[i];
+      const garmentImageUrl = garment.segmented_url || garment.image_url;
+      const category = this.mapGarmentTypeToCategory(garment.type);
+      const stepNum = i + 1;
+      const baseProgress = 60 + Math.round((i / totalSteps) * 35); // 60-95%
+      const garmentLabel = garment.nickname || garment.type;
+
+      onProgress?.({
+        status: RenderStatus.PROCESSING,
+        progress: baseProgress,
+        message: `Rendering garment ${stepNum} of ${totalSteps}: ${garmentLabel}...`,
+      });
+
+      currentModelImage = await fashn.runTryOn(
+        {
+          model_image: currentModelImage,
+          garment_image: garmentImageUrl!,
+          category,
+          mode: 'balanced',
+          garment_photo_type: 'auto',
+          num_samples: 1,
+          output_format: 'png',
+        },
+        (message) => {
+          onProgress?.({
+            status: RenderStatus.PROCESSING,
+            progress: baseProgress + 5,
+            message: `[${garmentLabel}] ${message}`,
           });
         }
-      }
-      
-      // Fallback to mock implementation
-      // In a real implementation, this would:
-      // 1. Load the Stable Diffusion model with user LoRA
-      // 2. Apply garment conditioning data
-      // 3. Run the inference with the specified pose
-      // 4. Return the generated image
-      
-      // Simulate the process with delays
-      for (let i = 0; i <= 5; i++) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        onProgress?.({ 
-          status: RenderStatus.PROCESSING, 
-          progress: 70 + (i * 6), 
-          message: `Generating image (${i}/5)` 
-        });
-      }
-      
-      // Generate mock result
-      const cacheKey = this.generateCacheKey(request);
-      const imageUrl = `file:///tmp/${cacheKey}.png`;
-      
-      return {
-        image_url: imageUrl,
-        cache_key: cacheKey,
-        timestamp: Date.now()
-      };
-    } catch (error) {
-      const errorMessage = `Inference failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-      onProgress?.({ status: RenderStatus.FAILED, error: errorMessage });
-      throw new Error(errorMessage);
+      );
+    }
+
+    // Step 5: Return result
+    const cacheKey = this.generateCacheKey(request);
+
+    return {
+      image_url: currentModelImage,
+      cache_key: cacheKey,
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Fetch the user's body scan image URL from Supabase storage.
+   * Returns a signed URL valid for 1 hour, or null if no scan exists.
+   */
+  private async getBodyScanImageUrl(userId: string): Promise<string | null> {
+    const { data: scanFiles } = await supabase
+      .storage
+      .from('body-scans')
+      .list(`${userId}`);
+
+    if (!scanFiles || scanFiles.length === 0) {
+      return null;
+    }
+
+    const frontScan = scanFiles.find(f => f.name.includes('front'));
+    const scanFile = frontScan || scanFiles[0];
+
+    const { data: signedUrl } = await supabase
+      .storage
+      .from('body-scans')
+      .createSignedUrl(`${userId}/${scanFile.name}`, 3600);
+
+    return signedUrl?.signedUrl || null;
+  }
+
+  /**
+   * Map garment type to FASHN category
+   */
+  private mapGarmentTypeToCategory(type: string): 'tops' | 'bottoms' | 'one-pieces' | 'auto' {
+    switch (type) {
+      case 'top':
+      case 'outerwear':
+        return 'tops';
+      case 'bottom':
+        return 'bottoms';
+      case 'dress':
+        return 'one-pieces';
+      default:
+        return 'auto';
     }
   }
 

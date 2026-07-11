@@ -154,13 +154,7 @@ export default function RenderResultScreen() {
           Preparing your outfit...
         </Text>
         <Text style={[styles.statusStep, status === RenderStatus.PROCESSING && styles.activeStep]}>
-          Loading your body model...
-        </Text>
-        <Text style={[styles.statusStep, status === RenderStatus.PROCESSING && styles.activeStep]}>
-          Generating your outfit...
-        </Text>
-        <Text style={[styles.statusStep, status === RenderStatus.PROCESSING && styles.activeStep]}>
-          Finalizing...
+          {message}
         </Text>
       </View>
       

@@ -80,6 +80,10 @@ export default function OutfitBuilderScreen() {
       Alert.alert('No Garments Selected', 'Please select at least one garment to render.');
       return;
     }
+    if (selectedIds.length > 2) {
+      Alert.alert('Too Many Garments', 'You can render up to 2 garments at a time. Please remove some selections.');
+      return;
+    }
     
     if (session?.user?.id) {
       navigation.navigate('RenderResult', { 
