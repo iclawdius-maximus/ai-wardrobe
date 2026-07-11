@@ -215,7 +215,7 @@ export class RenderPipeline {
     const modelImageUrl = await this.getBodyScanImageUrl(request.user_id);
     if (!modelImageUrl) {
       throw new Error(
-        'No body scan found. Please complete a body scan in the Body Scan tab before rendering outfits.'
+        'No model photo found. Please upload a front-facing photo from the Profile tab before rendering outfits.'
       );
     }
 
@@ -273,28 +273,35 @@ export class RenderPipeline {
   }
 
   /**
-   * Fetch the user's body scan image URL from Supabase storage.
-   * Returns a signed URL valid for 1 hour, or null if no scan exists.
+   * Fetch the user's model photo URL for FASHN try-on.
+   * Checks profile.model_photo_url first (explicit front-facing still image),
+   * then falls back to body_scan_photos[0] if available.
+   * Returns a signed URL valid for 1 hour, or null if no image exists.
    */
   private async getBodyScanImageUrl(userId: string): Promise<string | null> {
-    const { data: scanFiles } = await supabase
-      .storage
-      .from('body-scans')
-      .list(`${userId}`);
+    // First, check if the user has a model_photo_url set on their profile
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('model_photo_url, body_scan_photos')
+      .eq('id', userId)
+      .single();
 
-    if (!scanFiles || scanFiles.length === 0) {
-      return null;
+    if (profileError) {
+      console.warn('Failed to fetch profile for model image:', profileError.message);
     }
 
-    const frontScan = scanFiles.find(f => f.name.includes('front'));
-    const scanFile = frontScan || scanFiles[0];
+    // If model_photo_url exists and is a storage path, get a signed URL
+    if (profile?.model_photo_url) {
+      return profile.model_photo_url;
+    }
 
-    const { data: signedUrl } = await supabase
-      .storage
-      .from('body-scans')
-      .createSignedUrl(`${userId}/${scanFile.name}`, 3600);
+    // Fallback: try body_scan_photos (may be a video URL, not useful for FASHN)
+    // This is a last resort — ideally model_photo_url should be set explicitly
+    if (profile?.body_scan_photos && profile.body_scan_photos.length > 0) {
+      return profile.body_scan_photos[0];
+    }
 
-    return signedUrl?.signedUrl || null;
+    return null;
   }
 
   /**

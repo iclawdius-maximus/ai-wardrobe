@@ -2,6 +2,12 @@
 export type Profile = {
   id: string;
   body_scan_status: 'not_started' | 'uploaded' | 'processing' | 'complete' | 'failed';
+  body_scan_progress?: number | null;
+  body_scan_message?: string | null;
+  body_scan_photos?: string[];
+  body_scan_updated_at?: string | null;
+  body_measurements?: Record<string, number> | null;
+  model_photo_url?: string | null; // Front-facing still image for FASHN try-on
   lora_url: string | null;
   lora_trained_at: string | null;
   created_at: string;
