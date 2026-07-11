@@ -275,15 +275,13 @@ export class RenderPipeline {
 
   /**
    * Fetch the user's model photo URL for FASHN try-on.
-   * Checks profile.model_photo_url first (explicit front-facing still image),
-   * then falls back to body_scan_photos[0] if available.
-   * Returns a signed URL valid for 1 hour, or null if no image exists.
+   * Requires a front-facing still image (JPG/PNG) stored on the profile.
+   * Returns the URL or null if no model photo has been uploaded.
    */
   private async getBodyScanImageUrl(userId: string): Promise<string | null> {
-    // First, check if the user has a model_photo_url set on their profile
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('model_photo_url, body_scan_photos')
+      .select('model_photo_url')
       .eq('id', userId)
       .single();
 
@@ -292,15 +290,8 @@ export class RenderPipeline {
       console.warn('Failed to fetch profile for model image:', errMsg);
     }
 
-    // If model_photo_url exists and is a storage path, get a signed URL
     if (profile?.model_photo_url) {
       return profile.model_photo_url;
-    }
-
-    // Fallback: try body_scan_photos (may be a video URL, not useful for FASHN)
-    // This is a last resort — ideally model_photo_url should be set explicitly
-    if (profile?.body_scan_photos && profile.body_scan_photos.length > 0) {
-      return profile.body_scan_photos[0];
     }
 
     return null;
