@@ -34,7 +34,7 @@ export default function RenderResultScreen() {
       const result = await renderPipeline.renderOutfit(
         {
           garment_ids: garmentIds,
-          pose: 'front', // Default pose for now
+          pose: 'front',
           user_id: userId
         },
         (progress) => {
@@ -43,14 +43,26 @@ export default function RenderResultScreen() {
             setMessage(progress.message);
           }
           if (progress.error) {
-            setError(progress.error);
+            setError(typeof progress.error === 'string' ? progress.error : JSON.stringify(progress.error));
           }
         }
       );
       
       setResult(result);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      let errorMessage: string;
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      } else if (err && typeof err === 'object' && 'message' in err) {
+        const msg = (err as any).message;
+        errorMessage = typeof msg === 'string' ? msg : JSON.stringify(msg);
+      } else if (err && typeof err === 'object') {
+        errorMessage = JSON.stringify(err);
+      } else {
+        errorMessage = 'Unknown error occurred';
+      }
       setError(errorMessage);
       setStatus(RenderStatus.FAILED);
       console.error('Render error:', err);
@@ -77,7 +89,8 @@ export default function RenderResultScreen() {
       Alert.alert('Success', 'Outfit saved to your wardrobe!');
     } catch (err) {
       console.error('Error saving outfit:', err);
-      Alert.alert('Error', 'Failed to save outfit');
+      const msg = err instanceof Error ? err.message : (err as any)?.message || JSON.stringify(err);
+      Alert.alert('Error', typeof msg === 'string' ? msg : 'Failed to save outfit');
     }
   };
 

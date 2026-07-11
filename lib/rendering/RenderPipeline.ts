@@ -198,7 +198,8 @@ export class RenderPipeline {
         .single();
 
       if (error || !data) {
-        throw new Error(`Failed to load garment ${id}: ${error?.message || 'Not found'}`);
+        const errMsg = error?.message ? (typeof error.message === 'string' ? error.message : JSON.stringify(error.message)) : 'Not found';
+        throw new Error(`Failed to load garment ${id}: ${errMsg}`);
       }
 
       const garment = data as Garment;
@@ -287,7 +288,8 @@ export class RenderPipeline {
       .single();
 
     if (profileError) {
-      console.warn('Failed to fetch profile for model image:', profileError.message);
+      const errMsg = typeof profileError.message === 'string' ? profileError.message : JSON.stringify(profileError.message);
+      console.warn('Failed to fetch profile for model image:', errMsg);
     }
 
     // If model_photo_url exists and is a storage path, get a signed URL
